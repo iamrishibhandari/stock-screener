@@ -44,7 +44,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-API_KEY = "88XDZ81PV0HIFU8Q"
+API_KEY = st.secrets["FMP_API_KEY"]
 
 @st.cache_data(ttl=3600)
 def get_stocks(exchange):
