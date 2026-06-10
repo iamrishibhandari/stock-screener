@@ -44,7 +44,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-API_KEY = "7m547xtaDUj0oVEBzRT58XyesV4HCxwW"
+API_KEY = "88XDZ81PV0HIFU8Q"
 
 @st.cache_data(ttl=3600)
 def get_stocks(exchange):
