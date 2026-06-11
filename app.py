@@ -40,28 +40,63 @@ st.markdown("""
 st.markdown("""
 <div class="header-banner">
     <h1>Stock Screener</h1>
-    <p>Built by Rishi Bhandari &nbsp;|&nbsp; Filter stocks by key financial ratios</p>
+    <p>Built by Rishi Bhandari &nbsp;|&nbsp; Filter stocks by key financial ratios across global indices</p>
 </div>
 """, unsafe_allow_html=True)
 
 API_KEY = st.secrets["FMP_API_KEY"]
 
-@st.cache_data(ttl=3600)
-def get_stocks(exchange):
-    url = f"https://financialmodelingprep.com/api/v3/stock-screener?exchange={exchange}&limit=200&apikey={API_KEY}"
-    r = requests.get(url)
-    return r.json() if r.status_code == 200 else []
+INDICES = {
+    "S&P 500 (US Large Cap)": [
+        "AAPL","MSFT","GOOGL","AMZN","NVDA","META","TSLA","BRK-B","JPM","V",
+        "JNJ","WMT","PG","MA","HD","DIS","BAC","XOM","PFE","KO",
+        "PEP","CSCO","ADBE","NFLX","INTC","T","VZ","CVX","ABT","NKE",
+        "MRK","CRM","ORCL","AMD","QCOM","COST","MCD","TXN","UPS","HON",
+        "IBM","GE","CAT","BA","GS","SBUX","LMT","MMM","AXP","DE",
+        "UNH","LLY","AVGO","TMO","ACN","DHR","NEE","PM","RTX","LOW",
+        "INTU","AMGN","SPGI","UNP","BKNG","ISRG","NOW","PLD","SYK","MDT",
+        "GILD","ADI","VRTX","REGN","TJX","CB","MO","ZTS","MMC","CI"
+    ],
+    "Nasdaq 100 (US Tech-Heavy)": [
+        "AAPL","MSFT","GOOGL","AMZN","NVDA","META","TSLA","AVGO","COST","ADBE",
+        "NFLX","AMD","PEP","CSCO","INTC","QCOM","INTU","TXN","AMGN","HON",
+        "BKNG","ISRG","REGN","VRTX","GILD","ADI","MU","LRCX","PANW","SNPS",
+        "CDNS","MAR","ORLY","KLAC","MELI","CSX","CTAS","ABNB","FTNT","ADP",
+        "MNST","PAYX","ROST","ODFL","KDP","EXC","XEL","CHTR","DXCM","BIIB"
+    ],
+    "Nifty 50 (India Large Cap)": [
+        "RELIANCE.NS","TCS.NS","HDFCBANK.NS","ICICIBANK.NS","INFY.NS","HINDUNILVR.NS",
+        "ITC.NS","SBIN.NS","BHARTIARTL.NS","KOTAKBANK.NS","LT.NS","BAJFINANCE.NS",
+        "AXISBANK.NS","ASIANPAINT.NS","MARUTI.NS","SUNPHARMA.NS","TITAN.NS","ULTRACEMCO.NS",
+        "WIPRO.NS","ONGC.NS","NTPC.NS","NESTLEIND.NS","POWERGRID.NS","M&M.NS",
+        "TATAMOTORS.NS","TATASTEEL.NS","ADANIENT.NS","JSWSTEEL.NS","HCLTECH.NS","TECHM.NS",
+        "BAJAJFINSV.NS","COALINDIA.NS","HINDALCO.NS","DRREDDY.NS","CIPLA.NS","GRASIM.NS",
+        "BRITANNIA.NS","EICHERMOT.NS","DIVISLAB.NS","APOLLOHOSP.NS","BPCL.NS","INDUSINDBK.NS",
+        "HEROMOTOCO.NS","SBILIFE.NS","HDFCLIFE.NS","UPL.NS","TATACONSUM.NS","BAJAJ-AUTO.NS",
+        "SHREECEM.NS","ADANIPORTS.NS"
+    ]
+}
 
 @st.cache_data(ttl=3600)
-def get_ratios(symbol):
-    url = f"https://financialmodelingprep.com/api/v3/ratios-ttm/{symbol}?apikey={API_KEY}"
-    r = requests.get(url)
-    data = r.json()
-    return data[0] if data and isinstance(data, list) else {}
+def get_data(symbol):
+    profile_url = f"https://financialmodelingprep.com/stable/profile?symbol={symbol}&apikey={API_KEY}"
+    ratios_url = f"https://financialmodelingprep.com/stable/ratios-ttm?symbol={symbol}&apikey={API_KEY}"
+
+    profile_r = requests.get(profile_url)
+    ratios_r = requests.get(ratios_url)
+
+    profile = profile_r.json()
+    ratios = ratios_r.json()
+
+    profile_data = profile[0] if profile and isinstance(profile, list) else {}
+    ratios_data = ratios[0] if ratios and isinstance(ratios, list) else {}
+
+    return profile_data, ratios_data
 
 st.sidebar.header("Screening Filters")
 
-exchange = st.sidebar.selectbox("Exchange", ["NASDAQ", "NYSE", "AMEX"])
+index_choice = st.sidebar.selectbox("Index / Market", list(INDICES.keys()))
+TICKERS = INDICES[index_choice]
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Valuation**")
@@ -74,7 +109,7 @@ min_margin = st.sidebar.slider("Min Net Margin (%)", 0, 40, 5) / 100
 
 st.sidebar.markdown("**Size**")
 min_cap = st.sidebar.slider("Min Market Cap ($B)", 0, 100, 1) * 1e9
-max_cap = st.sidebar.slider("Max Market Cap ($B)", 1, 3000, 500) * 1e9
+max_cap = st.sidebar.slider("Max Market Cap ($B)", 1, 4000, 500) * 1e9
 
 st.sidebar.markdown("**Debt**")
 max_debt_equity = st.sidebar.slider("Max Debt/Equity", 0.0, 5.0, 2.0)
@@ -83,75 +118,76 @@ st.sidebar.markdown("---")
 run = st.sidebar.button("Run Screener", type="primary", use_container_width=True)
 
 if run:
-    with st.spinner("Fetching stocks and ratios..."):
-        stocks = get_stocks(exchange)
+    with st.spinner(f"Fetching data for {len(TICKERS)} stocks in {index_choice}..."):
+        results = []
+        skipped = 0
+        progress = st.progress(0)
 
-        if not stocks:
-            st.error("Could not fetch stock data. Check your API key.")
+        for i, symbol in enumerate(TICKERS):
+            profile, ratios = get_data(symbol)
+            progress.progress((i + 1) / len(TICKERS))
+
+            if not profile or not ratios:
+                skipped += 1
+                continue
+
+            pe = ratios.get("priceToEarningsRatioTTM", None)
+            pb = ratios.get("priceToBookRatioTTM", None)
+            roe = ratios.get("returnOnEquityTTM", None)
+            net_margin = ratios.get("netProfitMarginTTM", None)
+            debt_equity = ratios.get("debtToEquityRatioTTM", None)
+            market_cap = profile.get("marketCap", 0)
+            price = profile.get("price", 0)
+            currency = profile.get("currency", "USD")
+
+            if None in [pe, pb, roe, net_margin, debt_equity]:
+                skipped += 1
+                continue
+            if market_cap < min_cap or market_cap > max_cap:
+                continue
+            if pe > max_pe or pe < 0:
+                continue
+            if pb > max_pb or pb < 0:
+                continue
+            if roe < min_roe:
+                continue
+            if net_margin < min_margin:
+                continue
+            if debt_equity > max_debt_equity:
+                continue
+
+            results.append({
+                "Symbol": symbol,
+                "Company": profile.get("companyName", ""),
+                "Sector": profile.get("sector", ""),
+                "Price": f"{price:,.2f} {currency}",
+                "Market Cap": f"${market_cap/1e9:.2f}B",
+                "P/E": f"{pe:.1f}",
+                "P/B": f"{pb:.1f}",
+                "ROE": f"{roe*100:.1f}%",
+                "Net Margin": f"{net_margin*100:.1f}%",
+                "Debt/Equity": f"{debt_equity:.2f}"
+            })
+
+        progress.empty()
+
+        screened = len(TICKERS) - skipped
+
+        if results:
+            df = pd.DataFrame(results)
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Stocks Screened", screened)
+            col2.metric("Passed Filters", len(results))
+            col3.metric("Filter Rate", f"{len(results)/screened*100:.1f}%" if screened else "0%")
+
+            st.divider()
+            st.subheader(f"{len(results)} Stocks Match Your Criteria — {index_choice}")
+            st.markdown('<p class="section-label">Click column headers to sort</p>', unsafe_allow_html=True)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+            csv = df.to_csv(index=False)
+            st.download_button("Download Results as CSV", csv, "screener_results.csv", "text/csv")
         else:
-            results = []
-            progress = st.progress(0)
-            total = min(len(stocks), 100)
-
-            for i, stock in enumerate(stocks[:100]):
-                symbol = stock.get("symbol", "")
-                ratios = get_ratios(symbol)
-
-                if not ratios:
-                    continue
-
-                pe = ratios.get("peRatioTTM", None)
-                pb = ratios.get("priceToBookRatioTTM", None)
-                roe = ratios.get("returnOnEquityTTM", None)
-                net_margin = ratios.get("netProfitMarginTTM", None)
-                debt_equity = ratios.get("debtEquityRatioTTM", None)
-                market_cap = stock.get("marketCap", 0)
-
-                if None in [pe, pb, roe, net_margin, debt_equity]:
-                    continue
-                if market_cap < min_cap or market_cap > max_cap:
-                    continue
-                if pe > max_pe or pe < 0:
-                    continue
-                if pb > max_pb or pb < 0:
-                    continue
-                if roe < min_roe:
-                    continue
-                if net_margin < min_margin:
-                    continue
-                if debt_equity > max_debt_equity:
-                    continue
-
-                results.append({
-                    "Symbol": symbol,
-                    "Company": stock.get("companyName", ""),
-                    "Sector": stock.get("sector", ""),
-                    "Price": f"${stock.get('price', 0):,.2f}",
-                    "Market Cap": f"${market_cap/1e9:.2f}B",
-                    "P/E": f"{pe:.1f}",
-                    "P/B": f"{pb:.1f}",
-                    "ROE": f"{roe*100:.1f}%",
-                    "Net Margin": f"{net_margin*100:.1f}%",
-                    "Debt/Equity": f"{debt_equity:.2f}"
-                })
-
-                progress.progress((i + 1) / total)
-
-            progress.empty()
-
-            if results:
-                df = pd.DataFrame(results)
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Stocks Screened", total)
-                col2.metric("Passed Filters", len(results))
-                col3.metric("Filter Rate", f"{len(results)/total*100:.1f}%")
-
-                st.divider()
-                st.subheader(f"{len(results)} Stocks Match Your Criteria")
-                st.markdown('<p class="section-label">Click column headers to sort</p>', unsafe_allow_html=True)
-                st.dataframe(df, use_container_width=True, hide_index=True)
-
-                csv = df.to_csv(index=False)
-                st.download_button("Download Results as CSV", csv, "screener_results.csv", "text/csv")
-            else:
-                st.warning("No stocks matched your filters. Try loosening the criteria.")
+            st.warning(f"No stocks matched your filters. {skipped} stocks had incomplete data and were skipped. Try loosening the criteria.")
+else:
+    st.info("Select an index and adjust filters in the sidebar, then click **Run Screener** to begin.")
